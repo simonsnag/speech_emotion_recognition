@@ -1,0 +1,26 @@
+version: '3'
+
+services:
+  backend:
+    build: ./backend
+    volumes:
+      - ./backend:/app
+    network_mode: host # для записи с микрофона
+
+  frontend:
+    build: ./frontend
+    volumes:
+      - ./frontend:/app
+    environment:
+      - BACKEND_URL=http://localhost:8008
+      - STREAMLIT_SERVER_PORT=8009
+      - STREAMLIT_SERVER_HEADLESS=true
+      - STREAMLIT_SERVER_ENABLE_CORS=true
+      - PULSE_SERVER=unix:${XDG_RUNTIME_DIR}/pulse/native
+    network_mode: host # для записи с микрофона
+    depends_on:
+      - backend
+
+networks:
+  ser-network:
+    driver: bridge
