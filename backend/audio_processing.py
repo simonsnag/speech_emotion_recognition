@@ -2,8 +2,6 @@ import os
 import librosa
 import numpy as np
 import pandas as pd
-import sounddevice as sd
-from scipy.io.wavfile import write
 import speech_recognition as sr
 from logger import get_logger
 
@@ -22,29 +20,6 @@ class AudioProcessor:
         logger.info(
             f"AudioProcessor initialized with sample rate: {self.SAMPLE_RATE}, duration: {self.DURATION}",
         )
-
-    def record_audio(self, request_id: str) -> str:
-        """
-        Запись аудио с микрофона
-        """
-        filename = f"recording_{request_id}.wav"
-
-        filepath = os.path.join(FILES_DIR, os.path.basename(filename))
-        logger.debug(f"{request_id}: Recording audio")
-        try:
-            audio = sd.rec(
-                int(self.SAMPLE_RATE * self.DURATION),
-                samplerate=self.SAMPLE_RATE,
-                channels=1,
-                dtype="int16",
-            )
-            sd.wait()
-            write(filepath, self.SAMPLE_RATE, audio)
-            logger.debug(f"{request_id}: Audio recording completed: {filepath}")
-            return filepath
-        except Exception as e:
-            logger.error(f"{request_id}: Error recording audio: {str(e)}")
-            raise
 
     def check_audio_duration(self, request_id: str, audio_path: str):
         """
@@ -76,10 +51,33 @@ class AudioProcessor:
         logger.debug(f"{request_id}: Extracting features")
         try:
             audio_data, sr = librosa.load(audio_path, sr=self.SAMPLE_RATE)
-            mfccs = librosa.feature.mfcc(y=audio_data, sr=sr, n_mfcc=13)
-            return pd.DataFrame(
-                [np.mean(mfccs, axis=1)], columns=[f"mfcc_{i}" for i in range(1, 14)]
+            mfcc = librosa.feature.mfcc(
+                y=audio_data,
+                sr=sr,
+                n_mfcc=13,
+                n_fft=min(2048, len(audio_data)),
+                hop_length=min(512, len(audio_data) // 4),
             )
+
+            width = min(9, mfcc.shape[1])
+            if width % 2 == 0:
+                width -= 1
+            width = max(width, 1)
+
+            mfcc_delta = librosa.feature.delta(mfcc, order=1, width=width)
+
+            def agg(x):
+                return np.mean(x, axis=1)
+
+            features = np.hstack(
+                [
+                    agg(mfcc),
+                    agg(mfcc_delta),
+                ]
+            )
+            features = features.reshape(1, -1)
+            feats = pd.DataFrame(features, columns=[f"mfcc_{i}" for i in range(1, 27)])
+            return feats
         except Exception as e:
             logger.error(f"{request_id}: Error extracting features: {str(e)}")
             raise

@@ -3,7 +3,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
 from routers import router
-from model import emotion_models
 from logger import get_logger
 
 logger = get_logger(__name__)
@@ -12,13 +11,6 @@ logger = get_logger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Application starts...")
-    logger.info("Loading model...")
-    success = emotion_models.load_backup_model()
-    if success:
-        logger.info("Backup model loaded successfully")
-    else:
-        logger.warning("Using default model")
-
     yield
     logger.info("Application shuts down...")
 

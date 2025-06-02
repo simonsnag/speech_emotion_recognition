@@ -1,163 +1,97 @@
-import multiprocessing
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, File, UploadFile, Form
-from model import emotion_models
+from fastapi import APIRouter, HTTPException, File, UploadFile
+from text_processing import get_sentiment
 from schemas import (
-    AudioSource,
-    EmotionLabel,
-    FitResponse,
-    ModelInfoResponse,
-    ModelsResponse,
     PredictionResult,
-    RandomForestParams,
-    SetModelRequest,
-    SetModelResponse,
 )
 from logger import get_logger
 from utils import (
     process_audio_input,
     generate_request_id,
-    train_model,
 )
+from models import rf_model, torch_model
 
 router = APIRouter(prefix="/api")
 logger = get_logger(__name__)
 
 
-@router.post("/fit", response_model=FitResponse)
-async def fit_model(
-    audio_source: AudioSource = Form(...),
-    emotion_label: EmotionLabel = Form(...),
-    learning_params: RandomForestParams = Depends(),
+@router.post("/predict_rf", response_model=PredictionResult)
+async def predict_emotion_rf(
     file: Optional[UploadFile] = File(None),
+    check_text: bool = False,
 ):
     """
-    Дообучение модели новыми данными
-    """
-    try:
-        request_id = generate_request_id()
-
-        audio_path, text, _ = await process_audio_input(
-            audio_source=audio_source.value,
-            file=file,
-            request_id=request_id,
-            prefix=audio_source.value,
-            check_duration=True,
-        )
-
-        params = (
-            learning_params.model_dump(exclude_none=True) if learning_params else {}
-        )
-        queue = multiprocessing.Queue()
-        process = multiprocessing.Process(
-            target=train_model,
-            args=(
-                queue,
-                audio_path,
-                emotion_label,
-                params,
-                request_id,
-            ),
-        )
-
-        # Запуск процесса
-        process.start()
-        process.join(timeout=10)
-
-        if process.is_alive():
-            process.terminate()
-            logger.warning(f"{request_id}: Training timeout")
-            raise HTTPException(408, detail="Training timeout")
-
-        success = queue.get()
-        if not success:
-            raise HTTPException(500, detail="Model training failed")
-
-        return FitResponse(
-            request_id=request_id, detail="Model trained succesfully", status="success"
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"{request_id}: Training failed: {str(e)}")
-        raise HTTPException(500, detail=str(e))
-
-
-@router.post("/predict", response_model=PredictionResult)
-async def predict_emotion(
-    audio_source: AudioSource = Form(...),
-    file: Optional[UploadFile] = File(None),
-):
-    """
-    Распознавание эмоции в голосе с информацией о вероятностях
+    Распознавание эмоции в голосе с помощью деревьев
+    с информацией о вероятностях
     """
     request_id = generate_request_id()
     try:
-        audio_path, text, _ = await process_audio_input(
-            audio_source, file, request_id, check_duration=True
-        )
+        audio_path, text = await process_audio_input(file, request_id)
 
-        prediction = emotion_models.predict_with_probabilities(request_id, audio_path)
+        prediction = rf_model.predict_with_probabilities(request_id, audio_path)
 
         if "error" in prediction:
             raise HTTPException(500, detail=prediction["error"])
+
+        text_emotion = None
+        text_label_probability = None
+        if check_text:
+            text_emotion, probs = get_sentiment(text)
+            text_label_probability = max(probs) if probs is not None else None
 
         result = PredictionResult(
             request_id=request_id,
             text=text,
             voice_emotion=prediction["emotion"],
-            detail=prediction["detail"],
+            details=prediction["detail"],
+            text_emotion=text_emotion,
+            text_label_probability=text_label_probability,
         )
 
         return result
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"{request_id}: Error in detailed prediction: {str(e)}")
         raise HTTPException(500, detail=str(e))
 
 
-@router.get("/models", response_model=ModelsResponse)
-async def get_models():
+@router.post("/predict_fcnn", response_model=PredictionResult)
+async def predict_emotion_ml(
+    file: Optional[UploadFile] = File(None),
+    check_text: bool = False,
+):
     """
-    Получение списка доступных моделей
+    Распознавание эмоции в голосе с помощью полносвязной сети и
+    информацией о вероятностях
     """
+    request_id = generate_request_id()
     try:
-        models = emotion_models.get_available_models()
-        return ModelsResponse(models=models)
+        audio_path, text = await process_audio_input(file, request_id)
+
+        prediction = torch_model.predict_with_probabilities(request_id, audio_path)
+
+        if "error" in prediction:
+            raise HTTPException(500, detail=prediction["error"])
+
+        text_emotion = None
+        text_label_probability = None
+        if check_text:
+            text_emotion, probs = get_sentiment(text)
+            text_label_probability = max(probs) if probs is not None else None
+
+        result = PredictionResult(
+            request_id=request_id,
+            text=text,
+            voice_emotion=prediction["emotion"],
+            details=prediction["detail"],
+            text_emotion=text_emotion,
+            text_label_probability=text_label_probability,
+        )
+
+        return result
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error getting models: {str(e)}")
-        raise HTTPException(500, detail=str(e))
-
-
-@router.get("/models/current", response_model=ModelInfoResponse)
-async def get_current_model():
-    """
-    Получение информации о текущей модели
-    """
-    try:
-        model_info = emotion_models.get_current_model_info()
-        return ModelInfoResponse(**model_info)
-    except Exception as e:
-        logger.error(f"Error getting current model info: {str(e)}")
-        raise HTTPException(500, detail=str(e))
-
-
-@router.post("/models/set", response_model=SetModelResponse)
-async def set_model(model_request: SetModelRequest):
-    """
-    Выбор модели для использования
-    """
-    try:
-        success = emotion_models.set_model(model_request.ml_model_name)
-        if success:
-            return SetModelResponse(
-                message=f"Model '{model_request.ml_model_name}' set as current"
-            )
-        else:
-            raise HTTPException(
-                400, detail=f"Failed to set model '{model_request.ml_model_name}'"
-            )
-    except HTTPException as e:
-        raise e
-    except Exception as e:
-        logger.error(f"Error setting model: {str(e)}")
+        logger.error(f"{request_id}: Error in detailed prediction: {str(e)}")
         raise HTTPException(500, detail=str(e))

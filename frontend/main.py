@@ -14,22 +14,16 @@ def main():
     st.markdown("""
     ### Что умеет это приложение:
     - Анализировать эмоции в аудио
-    - Обучать модель на новых записях
     """)
 
     st.sidebar.title("Навигация")
-    page = st.sidebar.radio(
-        "Выбери страницу:", ["Предположение эмоции", "Дообучение модели", "Описание"]
-    )
+    page = st.sidebar.radio("Выбери страницу:", ["Описание", "Предсказание эмоции"])
 
-    if page == "Предположение эмоции":
+    if page == "Предсказание эмоции":
         from pages.predict import show_page
 
         show_page()
-    elif page == "Дообучение модели":
-        from pages.train import show_page
 
-        show_page()
     elif page == "Описание":
         from pages.about import show_page
 
