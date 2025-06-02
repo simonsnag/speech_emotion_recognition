@@ -1,9 +1,12 @@
 Система распознавания эмоций в аудио
 
 Веб-приложение для анализа эмоций в аудиозаписях. Включает API на FastAPI и интерфейс Streamlit. Основные функции: запись/загрузка аудио, анализ эмоций, обучение модели, управление моделями.
+Для запуска приложения локально:
 
 git clone <ссылка-репозитория>
 cd speech_emotion_recognition
 docker-compose up -d
-    Интерфейс: http://localhost:8009
-    API: http://localhost:8000/docs
+
+
+Интерфейс: http://localhost:8009
+API: http://localhost:8000/docs
